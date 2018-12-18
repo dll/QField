@@ -22,6 +22,7 @@
 #include <qgsvectorlayer.h>
 #include <qgsmaplayermodel.h>
 #include <qgsfeedback.h>
+#include <qgsfeaturerequest.h>
 
 #include "locatormodelsuperbridge.h"
 #include "qgsquickmapsettings.h"
@@ -56,24 +57,29 @@ void FeaturesLocatorFilter::prepare( const QString &string, const QgsLocatorCont
     if ( !layer || !layer->flags().testFlag( QgsMapLayer::Searchable ) )
       continue;
 
-    QgsExpression expression( layer->displayExpression() );
     QgsExpressionContext context;
     context.appendScopes( QgsExpressionContextUtils::globalProjectLayerScopes( layer ) );
-    expression.prepare( &context );
+
+    QgsExpression displayExpression( layer->displayExpression() );
+    displayExpression.prepare( &context );
+
+    QgsExpression scoreExpression = QStringLiteral( "length(longest_common_substring('%2', %1)) / %3" )
+                                    .arg( layer->displayExpression() )
+                                    .arg( string )
+                                    .arg( string.length() );
+    scoreExpression.prepare( &context );
 
     QgsFeatureRequest req;
-    req.setSubsetOfAttributes( expression.referencedAttributeIndexes( layer->fields() ).toList() );
-    if ( !expression.needsGeometry() )
+    req.setSubsetOfAttributes( displayExpression.referencedAttributeIndexes( layer->fields() ).toList() );
+    if ( !displayExpression.needsGeometry() )
       req.setFlags( QgsFeatureRequest::NoGeometry );
-    QString enhancedSearch = string;
-    enhancedSearch.replace( " ", "%" );
-    req.setFilterExpression( QStringLiteral( "%1 ILIKE '%%2%'" )
-                             .arg( layer->displayExpression() )
-                             .arg( enhancedSearch ) );
-    req.setLimit( 30 );
+    req.setLimit( mMaxResultsPerLayer );
+    req.setFilterExpression( QStringLiteral( "%1 > 0" ).arg( scoreExpression ) );
+    req.setOrderBy( QgsFeatureRequest::OrderBy() << QgsFeatureRequest::OrderByClause( scoreExpression, false, false ) );
 
     std::shared_ptr<PreparedLayer> preparedLayer( new PreparedLayer() );
-    preparedLayer->expression = expression;
+    preparedLayer->displayExpression = displayExpression;
+    preparedLayer->scoreExpression = scoreExpression;
     preparedLayer->context = context;
     preparedLayer->layerId = layer->id();
     preparedLayer->layerName = layer->name();
@@ -106,7 +112,8 @@ void FeaturesLocatorFilter::fetchResults( const QString &string, const QgsLocato
 
       preparedLayer->context.setFeature( f );
 
-      result.displayString = preparedLayer->expression.evaluate( &( preparedLayer->context ) ).toString();
+      result.displayString = preparedLayer->displayExpression.evaluate( &( preparedLayer->context ) ).toString();
+      result.score = preparedLayer->scoreExpression.evaluate( &( preparedLayer->context ) ).toDouble();
 
       result.userData = QVariantList() << f.id() << preparedLayer->layerId;
       result.icon = preparedLayer->layerIcon;

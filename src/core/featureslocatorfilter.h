@@ -48,7 +48,8 @@ class FeaturesLocatorFilter : public QgsLocatorFilter
     struct PreparedLayer
     {
       public:
-        QgsExpression expression;
+        QgsExpression displayExpression;
+        QgsExpression scoreExpression;
         QgsExpressionContext context;
         std::unique_ptr<QgsVectorLayerFeatureSource> featureSource;
         QgsFeatureRequest request;
